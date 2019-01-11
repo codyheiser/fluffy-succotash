@@ -1,0 +1,397 @@
+# furry-couscous dimensionality reduction objects
+
+# @author: C Heiser
+# December 2018
+
+# utility functions
+from fcc_utils import *
+# packages for reading in data files
+import os
+import zipfile
+import gzip
+# basics
+import numpy as np
+import pandas as pd
+import scipy as sc
+# scikit packages
+from sklearn.preprocessing import normalize
+from sklearn.decomposition import PCA        	# PCA
+from sklearn.manifold import TSNE            	# t-SNE
+from sklearn.model_selection import KFold		# K-fold cross-validation
+from sklearn.neighbors import kneighbors_graph	# K-nearest neighbors graph
+# density peak clustering
+from pydpc import Cluster                    	# density-peak clustering
+# DCA packages
+import scanpy.api as scanpy
+from dca.api import dca                      	# DCA
+# UMAP
+from umap import UMAP                           # UMAP
+# FIt-SNE
+import sys; sys.path.append('/Users/Cody/git/FIt-SNE')
+from fast_tsne import fast_tsne					# FIt-SNE
+# NVR
+import nvr 										# NVR
+# plotting packages
+import matplotlib
+import matplotlib.pyplot as plt
+import seaborn as sns; sns.set(style = 'white')
+
+
+class RNA_counts():
+	'''
+	Object containing scRNA-seq counts data
+		data = pd.DataFrame containing counts data.
+		labels = list of index_col and header values to pass to pd.read_csv(). None if no cell or gene IDs, respectively.
+		cells_axis = 0 if cells as rows, 1 if cells as columns.
+	'''
+	def __init__(self, data, labels=[0,0], cells_axis=0):
+		'''initialize object from np.ndarray or pd.DataFrame (data)'''
+		self.data = pd.DataFrame(data) # store pd.DataFrame as data attribute
+		self.cell_labels = labels[0] # column containing cell IDs
+		self.gene_labels = labels[1] # row containing gene IDs
+
+		if cells_axis == 1: # put cells on 0 axis if not already there
+			self.data = self.data.transpose()
+
+		if self.cell_labels!=None: # if cell IDs present, save as metadata
+			self.cell_IDs = self.data.index
+
+		if self.gene_labels!=None: # if gene IDs present, save as metadata
+			self.gene_IDs = self.data.columns
+
+		self.counts = np.ascontiguousarray(self.data) # store counts matrix as counts attribute (no labels, np.array format)
+
+
+	def distance_matrix(self, transform=None, **kwargs):
+		'''
+		calculate Euclidean distances between cells in matrix of shape (n_cells, n_cells)
+			norm = how to normalize data prior to calculating distances (None, "arcsinh", "log2")
+			**kwargs = keyword arguments to pass to normalization functions
+		'''
+		if transform is None:
+			return sc.spatial.distance_matrix(self.counts, self.counts)
+
+		elif transform == 'arcsinh':
+			transformed = self.arcsinh_norm(**kwargs)
+			return sc.spatial.distance_matrix(transformed, transformed)
+
+		elif transform == 'log2':
+			transformed = self.log2_norm(**kwargs)
+			return sc.spatial.distance_matrix(transformed, transformed)
+
+
+	def knn_graph(self, k, **kwargs):
+		'''
+		calculate k nearest neighbors for each cell in distance matrix of shape (n_cells, n_cells)
+			k = number of nearest neighbors to test
+			**kwargs = keyword arguments to pass to distance_matrix() function
+		'''
+		return kneighbors_graph(self.distance_matrix(**kwargs), k, mode='connectivity', include_self=False).toarray()
+
+
+	def arcsinh_norm(self, norm=True, scale=1000):
+		'''
+		Perform an arcsinh-transformation on a np.ndarray containing raw data of shape=(n_cells,n_genes).
+		Useful for feeding into PCA or tSNE.
+			norm = convert to fractional counts first? divide each count by sqrt of sum of squares of counts for cell.
+			scale = factor to multiply values by before arcsinh-transform. scales values away from [0,1] in order to make arcsinh more effective.
+		'''
+		if not norm:
+			return np.arcsinh(self.counts * scale)
+
+		else:
+			return np.arcsinh(normalize(self.counts, axis=0, norm='l2') * scale)
+
+
+	def log2_norm(self, norm=True):
+		'''
+		Perform a log2-transformation on a np.ndarray containing raw data of shape=(n_cells,n_genes).
+		Useful for feeding into PCA or tSNE.
+			norm = convert to fractional counts first? divide each count by sqrt of sum of squares of counts for cell.
+		'''
+		if not norm:
+			return np.log2(self.counts + 1)
+
+		else:
+			return np.log2(normalize(self.counts, axis=0, norm='l2') + 1)
+
+
+	@classmethod
+	def from_file(cls, datafile, labels=[0,0], cells_axis=0):
+		'''initialize object from outside file (datafile)'''
+		filetype = os.path.splitext(datafile)[1] # extract file extension to save as metadata
+
+		if filetype == '.zip': # if compressed, open the file and update filetype
+			zf = zipfile.ZipFile(datafile)
+			datafile = zf.open(os.path.splitext(datafile)[0]) # update datafile with zipfile object
+			filetype = os.path.splitext(os.path.splitext(datafile)[0])[1] # update filetype
+
+
+		if filetype == '.csv': # read comma-delimited tables
+			data = pd.read_csv(datafile, header=labels[1], index_col=labels[0])
+
+		elif filetype == '.txt': # read tab-delimited text files
+				data = pd.read_table(datafile, header=labels[1], index_col=labels[0])
+
+
+		if filetype == '.gz': # if file is g-zipped, read accordingly
+			filetype = os.path.splitext(os.path.splitext(datafile)[0])[1] # update filetype
+
+			if filetype == '.csv':
+				data = pd.read_csv(gzip.open(datafile), header=labels[1], index_col=labels[0])
+
+			elif filetype == '.txt':
+				data = pd.read_table(gzip.open(datafile), header=labels[1], index_col=labels[0])
+
+		return cls(data, labels=labels, cells_axis=cells_axis)
+
+
+	@classmethod
+	def drop_set(cls, counts_obj, drop_index, axis):
+		'''drop cells (axis 0) or genes (axis 1) with a pd.Index list. return RNA_counts object with reduced data.'''
+		return cls(counts_obj.data.drop(drop_index, axis=axis), labels=[counts_obj.cell_labels, counts_obj.gene_labels])
+
+
+	@classmethod
+	def downsample_rand(cls, counts_obj, n_cells, seed=None):
+		'''randomly downsample a dataframe of shape (n_cells, n_features) to n_cells and generate new counts object'''
+		np.random.seed(seed) # set seed for reproducible sampling if desired
+		return cls(counts_obj.data.iloc[np.random.choice(counts_obj.data.shape[0], n_cells, replace=False)], labels=[counts_obj.cell_labels, counts_obj.gene_labels])
+
+
+	@classmethod
+	def downsample_proportional(cls, counts_obj, clu_membership, n_cells, seed=None):
+		'''
+		downsample a dataframe of shape (n_cells, n_features) to total n_cells using cluster membership.
+		finds proportion of cells in each cluster (DR.clu.membership attribute) and maintains each percentage.
+			counts_obj = RNA_counts object with data to downsample
+			clu_membership = DR.clu.membership np.array generated from assocated RNA_counts data object
+			n_cells = total number of cells desired in downsampled RNA_counts object
+		'''
+		np.random.seed(seed) # set seed for reproducible sampling if desired
+		IDs, clu_counts = np.unique(clu_membership, return_counts=True) # get cluster IDs and number of cells in each
+
+		cells_out = np.array([]) # initialize array of output cell indices
+		for ID, count in zip(IDs, clu_counts):
+			clu_num = int(count/clu_counts.sum()*n_cells) + 1 # number of cells to sample for given cluster
+			cells_out = np.append(cells_out, np.random.choice(np.where(clu_membership == ID)[0], clu_num, replace=False))
+
+		return cls(counts_obj.data.iloc[cells_out], labels=[counts_obj.cell_labels, counts_obj.gene_labels])
+
+
+	@classmethod
+	def kfold_split(cls, counts_obj, n_splits, seed=None, shuffle=True):
+		'''split cells using k-fold strategy to reduce data size and cross-validate'''
+		kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=seed) # generate KFold object for splitting data
+		splits = {'train':[], 'test':[]} # initiate empty dictionary to dump matrix subsets into
+
+		for train_i, test_i in kf.split(counts_obj.data):
+			splits['train'].append(cls(counts_obj.data.iloc[train_i], labels=[counts_obj.cell_labels, counts_obj.gene_labels]))
+			splits['test'].append(cls(counts_obj.data.iloc[test_i], labels=[counts_obj.cell_labels, counts_obj.gene_labels]))
+
+		return splits
+
+
+	@classmethod
+	def nvr_select(cls, counts_obj, scale=1000):
+		if scale:
+			hqGenes = nvr.parseNoise(counts_obj.counts) # identify non-noisy genes
+			selected_genes = nvr.select_genes(counts_obj.arcsinh_norm(scale=scale)[:,hqGenes]) # select features from arsinh-transformed, non-noisy data
+
+		else:
+			selected_genes = nvr.select_genes(counts_obj.arcsinh_norm(scale=scale)) # select features from arsinh-transformed, non-noisy data
+
+		print('\nSelected {} variable genes\n'.format(selected_genes.shape[0]))
+		return cls(counts_obj.data.iloc[:,selected_genes], labels=[counts_obj.cell_labels, counts_obj.gene_labels])
+
+
+	@classmethod
+	def var_select(cls, counts_obj, n_features):
+		'''select n_features (genes) with highest variance across all cells in dataset'''
+		v = counts_obj.data.var(axis=0).nlargest(n_features).index # get top n variant gene IDs
+		return cls(counts_obj.data[v], labels=[counts_obj.cell_labels, counts_obj.gene_labels])
+
+
+
+class DR():
+	'''Catch-all class for dimensionality reduction outputs for high-dimensional data of shape (n_cells, n_features)'''
+	def __init__(self, matrix):
+		self.input = matrix # store input matrix as metadata
+
+
+	def distance_matrix(self):
+		'''calculate Euclidean distances between cells in matrix of shape (n_cells, n_cells)'''
+		return sc.spatial.distance_matrix(self.results, self.results)
+
+
+	def knn_graph(self, k):
+		'''calculate k nearest neighbors for each cell in distance matrix of shape (n_cells, n_cells)'''
+		return kneighbors_graph(self.distance_matrix(), k, mode='connectivity', include_self=False).toarray()
+
+
+	def silhouette_score(self):
+		'''calculate silhouette score of clustered results'''
+		assert hasattr(self.clu, 'membership'), 'Clustering not yet determined. Assign clusters with self.clu.assign().\n'
+		return silhouette_score(self.results, self.clu.membership) # calculate silhouette score
+
+
+	def cluster_counts(self, prettyprint=True):
+		'''return number of cells in each cluster'''
+		assert hasattr(self.clu, 'membership'), 'Clustering not yet determined. Assign clusters with self.clu.assign().\n'
+		IDs, counts = np.unique(self.clu.membership, return_counts=True)
+		for ID, count in zip(IDs, counts):
+			print('{} cells in cluster {} ({} %)\n'.format(count, ID, np.round(count/counts.sum()*100,3)))
+
+
+	def plot_clusters(self):
+		'''Visualize density peak clustering of DR results and calculate silhouette score'''
+		assert hasattr(self.clu, 'clusters'), 'Clustering not yet determined. Assign clusters with self.clu.assign().\n'
+		fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+		ax[0].scatter(self.results[:, 0], self.results[:, 1], s=75, alpha=0.7)
+		ax[0].scatter(self.results[self.clu.clusters, 0], self.results[self.clu.clusters, 1], s=90, c="red")
+		ax[1].scatter(self.results[:, 0], self.results[:, 1], s=75, alpha=0.7, c=self.clu.density)
+		ax[2].scatter(self.results[:, 0], self.results[:, 1], s=75, alpha=0.7, c=self.clu.membership, cmap=plt.cm.plasma)
+		IDs, counts = np.unique(self.clu.membership, return_counts=True) # get cluster counts and IDs
+		bbox_props = dict(boxstyle="round", fc="w", ec="0.5", alpha=0.9) # set up annotate box
+		# add percentages of each cluster to plot
+		for ID, count, x, y in zip(IDs, counts, self.results[self.clu.clusters, 0], self.results[self.clu.clusters, 1]):
+			ax[2].annotate('{} %'.format(np.round(count/counts.sum()*100,2)), xy=(x, y), ha="center", va="center", size=12, bbox=bbox_props)
+
+		for _ax in ax:
+			_ax.set_aspect('equal')
+			_ax.tick_params(labelbottom=False, labelleft=False)
+
+		sns.despine(left=True, bottom=True)
+		fig.tight_layout()
+
+
+
+class fcc_PCA(DR):
+	'''
+	Object containing Principal Component Analysis of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components
+	'''
+	def __init__(self, matrix, n_components):
+		DR.__init__(self, matrix) # inherits from DR object
+		self.components = n_components # store number of components as metadata
+		self.fit = PCA(n_components=self.components).fit(self.input) # fit PCA to data
+		self.results = self.fit.transform(self.input) # transform data to fit
+		self.clu = Cluster(self.results, autoplot=False) # get density-peak cluster information for results to use for plotting
+
+
+	def plot(self):
+		plt.figure(figsize=(10,5))
+
+		plt.subplot(121)
+		plt.scatter(self.results[:,0], self.results[:,1], s=75, alpha=0.7, c=self.clu.density)
+		plt.tick_params(labelbottom=False, labelleft=False)
+		plt.ylabel('PC2', fontsize=14)
+		plt.xlabel('PC1', fontsize=14)
+		plt.title('PCA', fontsize=16)
+
+		plt.subplot(122)
+		plt.plot(np.cumsum(np.round(self.fit.explained_variance_ratio_, decimals=3)*100))
+		plt.tick_params(labelsize=12)
+		plt.ylabel('% Variance Explained', fontsize=14)
+		plt.xlabel('# of Features', fontsize=14)
+		plt.title('PCA Analysis', fontsize=16)
+
+		sns.despine()
+		plt.tight_layout()
+		plt.show()
+		plt.close()
+
+
+
+class fcc_tSNE(DR):
+	'''
+	Object containing t-SNE of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components
+	'''
+	def __init__(self, matrix, perplexity, n_components=2):
+		DR.__init__(self, matrix) # inherits from DR object
+		self.components = n_components # store number of components as metadata
+		self.perplexity = perplexity # store tSNE perplexity as metadata
+		self.results = TSNE(n_components=self.components, perplexity=self.perplexity).fit_transform(self.input)
+		self.clu = Cluster(self.results.astype('double'), autoplot=False) # get density-peak cluster information for results to use for plotting
+
+
+	def plot(self):
+		plt.figure(figsize=(5,5))
+		plt.scatter(self.results[:,0], self.results[:,1], s=75, alpha=0.7, c=self.clu.density)
+		plt.xlabel('t-SNE 1', fontsize=14)
+		plt.ylabel('t-SNE 2', fontsize=14)
+		plt.tick_params(labelbottom=False, labelleft=False)
+		sns.despine(left=True, bottom=True)
+		plt.tight_layout()
+		plt.show()
+		plt.close()
+
+
+
+class fcc_FItSNE(DR):
+	'''
+	Object containing FIt-SNE (https://github.com/KlugerLab/FIt-SNE) of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components
+	'''
+	def __init__(self, matrix, perplexity):
+		DR.__init__(self, matrix) # inherits from DR object
+		self.perplexity = perplexity # store tSNE perplexity as metadata
+		self.results = fast_tsne(self.input, perplexity=self.perplexity)
+		self.clu = Cluster(self.results.astype('double'), autoplot=False) # get density-peak cluster information for results to use for plotting
+
+
+	def plot(self):
+		plt.figure(figsize=(5,5))
+		plt.scatter(self.results[:,0], self.results[:,1], s=75, alpha=0.7, c=self.clu.density)
+		plt.xlabel('FIt-SNE 1', fontsize=14)
+		plt.ylabel('FIt-SNE 2', fontsize=14)
+		plt.tick_params(labelbottom=False, labelleft=False)
+		sns.despine(left=True, bottom=True)
+		plt.tight_layout()
+		plt.show()
+		plt.close()
+
+
+
+class fcc_UMAP(DR):
+	'''
+	Object containing UMAP of high-dimensional dataset of shape (n_cells, n_features) to reduce to 2 components
+	'''
+	def __init__(self, matrix, perplexity, min_dist=0.3, metric='correlation'):
+		DR.__init__(self, matrix) # inherits from DR object
+		self.perplexity = perplexity
+		self.min_dist = min_dist
+		self.metric = metric
+		self.results = UMAP(n_neighbors=self.perplexity, min_dist=self.min_dist, metric=self.metric).fit_transform(self.input)
+		self.clu = Cluster(self.results.astype('double'), autoplot=False)
+
+
+	def plot(self):
+		plt.figure(figsize=(5,5))
+		plt.scatter(self.results[:,0], self.results[:,1], s=75, alpha=0.7, c=self.clu.density)
+		plt.xlabel('UMAP 1', fontsize=14)
+		plt.ylabel('UMAP 2', fontsize=14)
+		plt.tick_params(labelbottom=False, labelleft=False)
+		sns.despine(left=True, bottom=True)
+		plt.tight_layout()
+		plt.show()
+		plt.close()
+
+
+
+class fcc_DCA(DR):
+	'''
+	Object containing DCA of high-dimensional dataset of shape (n_cells, n_features) to reduce to 33 components
+		NOTE: DCA removes features with 0 counts for all cells prior to processing.
+	'''
+	def __init__(self, matrix, n_threads=2, norm=True):
+		DR.__init__(self, matrix) # inherits from DR object
+		self.DCA_norm = norm # store normalization decision as metadata
+		self.adata = scanpy.AnnData(self.input) # generate AnnData object (https://github.com/theislab/scanpy) for passing to DCA
+		scanpy.pp.filter_genes(self.adata, min_counts=1) # remove features with 0 counts for all cells
+		dca(self.adata, threads=n_threads) # perform DCA analysis on AnnData object
+
+		if self.DCA_norm:
+			scanpy.pp.normalize_per_cell(self.adata) # normalize features for each cell with scanpy's method
+			scanpy.pp.log1p(self.adata) # log-transform data with scanpy's method
+
+		self.results = self.adata.X # return the denoised data as a np.ndarray
+		self.clu = Cluster(self.results.astype('double'), autoplot=False)
