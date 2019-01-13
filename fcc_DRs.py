@@ -27,7 +27,7 @@ from dca.api import dca                      	# DCA
 # UMAP
 from umap import UMAP                           # UMAP
 # FIt-SNE
-import sys; sys.path.append('/Users/Cody/git/FIt-SNE')
+import sys; sys.path.append('/Users/Cody/git/FIt-SNE')	# ensure path to FIt-SNE repo is correct!
 from fast_tsne import fast_tsne					# FIt-SNE
 # NVR
 import nvr 										# NVR
@@ -44,9 +44,10 @@ class RNA_counts():
 		labels = list of index_col and header values to pass to pd.read_csv(). None if no cell or gene IDs, respectively.
 		cells_axis = 0 if cells as rows, 1 if cells as columns.
 	'''
-	def __init__(self, data, labels=[0,0], cells_axis=0):
+	def __init__(self, data, labels=[0,0], cells_axis=0, barcodes=None):
 		'''initialize object from np.ndarray or pd.DataFrame (data)'''
 		self.data = pd.DataFrame(data) # store pd.DataFrame as data attribute
+
 		self.cell_labels = labels[0] # column containing cell IDs
 		self.gene_labels = labels[1] # row containing gene IDs
 
@@ -60,6 +61,16 @@ class RNA_counts():
 			self.gene_IDs = self.data.columns
 
 		self.counts = np.ascontiguousarray(self.data) # store counts matrix as counts attribute (no labels, np.array format)
+
+		if barcodes is not None: # if barcodes df provided, merge with data
+			data_coded = self.data.merge(barcodes, left_index=True, right_on='Cell Barcode', how='left')
+			data_coded = data_coded.set_index('Cell Barcode', drop=True)
+			data_coded = data_coded.astype({'Barcode':'category'})
+			self.data_coded = data_coded # create 'coded' attribute that has data and barcodes
+			self.barcodes = data_coded['Barcode'] # make barcodes attribute pd.Series for passing to other classes
+
+		else:
+			self.barcodes = None
 
 
 	def distance_matrix(self, transform=None, **kwargs):
@@ -117,7 +128,7 @@ class RNA_counts():
 
 
 	@classmethod
-	def from_file(cls, datafile, labels=[0,0], cells_axis=0):
+	def from_file(cls, datafile, labels=[0,0], cells_axis=0, barcodefile=None):
 		'''initialize object from outside file (datafile)'''
 		filetype = os.path.splitext(datafile)[1] # extract file extension to save as metadata
 
@@ -143,7 +154,15 @@ class RNA_counts():
 			elif filetype == '.txt':
 				data = pd.read_table(gzip.open(datafile), header=labels[1], index_col=labels[0])
 
-		return cls(data, labels=labels, cells_axis=cells_axis)
+
+		if barcodefile: # if barcodes provided, read in file
+			barcodes = pd.read_csv(barcodefile, index_col=0).T
+
+		else:
+			barcodes = None
+
+
+		return cls(data, labels=labels, cells_axis=cells_axis, barcodes=barcodes)
 
 
 	@classmethod
@@ -215,8 +234,14 @@ class RNA_counts():
 
 class DR():
 	'''Catch-all class for dimensionality reduction outputs for high-dimensional data of shape (n_cells, n_features)'''
-	def __init__(self, matrix):
+	def __init__(self, matrix, barcodes=None):
 		self.input = matrix # store input matrix as metadata
+
+		if barcodes is not None:
+			self.barcodes = barcodes # maintain given barcode information
+
+		else:
+			self.barcodes = None
 
 
 	def distance_matrix(self):
@@ -270,8 +295,8 @@ class fcc_PCA(DR):
 	'''
 	Object containing Principal Component Analysis of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components
 	'''
-	def __init__(self, matrix, n_components):
-		DR.__init__(self, matrix) # inherits from DR object
+	def __init__(self, matrix, n_components, barcodes=None):
+		DR.__init__(self, matrix, barcodes) # inherits from DR object
 		self.components = n_components # store number of components as metadata
 		self.fit = PCA(n_components=self.components).fit(self.input) # fit PCA to data
 		self.results = self.fit.transform(self.input) # transform data to fit
@@ -282,7 +307,7 @@ class fcc_PCA(DR):
 		plt.figure(figsize=(10,5))
 
 		plt.subplot(121)
-		plt.scatter(self.results[:,0], self.results[:,1], s=75, alpha=0.7, c=self.clu.density)
+		sns.scatterplot(x=self.results[:,0], y=self.results[:,1], s=75, alpha=0.7, hue=self.clu.density, legend=None, edgecolor='none')
 		plt.tick_params(labelbottom=False, labelleft=False)
 		plt.ylabel('PC2', fontsize=14)
 		plt.xlabel('PC1', fontsize=14)
@@ -306,8 +331,8 @@ class fcc_tSNE(DR):
 	'''
 	Object containing t-SNE of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components
 	'''
-	def __init__(self, matrix, perplexity, n_components=2):
-		DR.__init__(self, matrix) # inherits from DR object
+	def __init__(self, matrix, perplexity, n_components=2, barcodes=None):
+		DR.__init__(self, matrix, barcodes) # inherits from DR object
 		self.components = n_components # store number of components as metadata
 		self.perplexity = perplexity # store tSNE perplexity as metadata
 		self.results = TSNE(n_components=self.components, perplexity=self.perplexity).fit_transform(self.input)
@@ -316,7 +341,7 @@ class fcc_tSNE(DR):
 
 	def plot(self):
 		plt.figure(figsize=(5,5))
-		plt.scatter(self.results[:,0], self.results[:,1], s=75, alpha=0.7, c=self.clu.density)
+		sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.clu.density, legend=None, edgecolor='none')
 		plt.xlabel('t-SNE 1', fontsize=14)
 		plt.ylabel('t-SNE 2', fontsize=14)
 		plt.tick_params(labelbottom=False, labelleft=False)
@@ -331,8 +356,8 @@ class fcc_FItSNE(DR):
 	'''
 	Object containing FIt-SNE (https://github.com/KlugerLab/FIt-SNE) of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components
 	'''
-	def __init__(self, matrix, perplexity):
-		DR.__init__(self, matrix) # inherits from DR object
+	def __init__(self, matrix, perplexity, barcodes=None):
+		DR.__init__(self, matrix, barcodes) # inherits from DR object
 		self.perplexity = perplexity # store tSNE perplexity as metadata
 		self.results = fast_tsne(self.input, perplexity=self.perplexity)
 		self.clu = Cluster(self.results.astype('double'), autoplot=False) # get density-peak cluster information for results to use for plotting
@@ -340,7 +365,7 @@ class fcc_FItSNE(DR):
 
 	def plot(self):
 		plt.figure(figsize=(5,5))
-		plt.scatter(self.results[:,0], self.results[:,1], s=75, alpha=0.7, c=self.clu.density)
+		sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.clu.density, legend=None, edgecolor='none')
 		plt.xlabel('FIt-SNE 1', fontsize=14)
 		plt.ylabel('FIt-SNE 2', fontsize=14)
 		plt.tick_params(labelbottom=False, labelleft=False)
@@ -355,8 +380,8 @@ class fcc_UMAP(DR):
 	'''
 	Object containing UMAP of high-dimensional dataset of shape (n_cells, n_features) to reduce to 2 components
 	'''
-	def __init__(self, matrix, perplexity, min_dist=0.3, metric='correlation'):
-		DR.__init__(self, matrix) # inherits from DR object
+	def __init__(self, matrix, perplexity, min_dist=0.3, metric='correlation', barcodes=None):
+		DR.__init__(self, matrix, barcodes) # inherits from DR object
 		self.perplexity = perplexity
 		self.min_dist = min_dist
 		self.metric = metric
@@ -366,7 +391,7 @@ class fcc_UMAP(DR):
 
 	def plot(self):
 		plt.figure(figsize=(5,5))
-		plt.scatter(self.results[:,0], self.results[:,1], s=75, alpha=0.7, c=self.clu.density)
+		sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.clu.density, legend=None, edgecolor='none')
 		plt.xlabel('UMAP 1', fontsize=14)
 		plt.ylabel('UMAP 2', fontsize=14)
 		plt.tick_params(labelbottom=False, labelleft=False)
@@ -382,8 +407,8 @@ class fcc_DCA(DR):
 	Object containing DCA of high-dimensional dataset of shape (n_cells, n_features) to reduce to 33 components
 		NOTE: DCA removes features with 0 counts for all cells prior to processing.
 	'''
-	def __init__(self, matrix, n_threads=2, norm=True):
-		DR.__init__(self, matrix) # inherits from DR object
+	def __init__(self, matrix, n_threads=2, norm=True, barcodes=None):
+		DR.__init__(self, matrix, barcodes) # inherits from DR object
 		self.DCA_norm = norm # store normalization decision as metadata
 		self.adata = scanpy.AnnData(self.input) # generate AnnData object (https://github.com/theislab/scanpy) for passing to DCA
 		scanpy.pp.filter_genes(self.adata, min_counts=1) # remove features with 0 counts for all cells
