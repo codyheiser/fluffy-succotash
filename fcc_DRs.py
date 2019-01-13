@@ -326,6 +326,22 @@ class fcc_PCA(DR):
 		plt.close()
 
 
+	def plot_barcodes(self):
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		plt.figure(figsize=(5,5))
+
+		sns.scatterplot(x=self.results[:,0], y=self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
+		plt.tick_params(labelbottom=False, labelleft=False)
+		plt.ylabel('PC2', fontsize=14)
+		plt.xlabel('PC1', fontsize=14)
+		plt.title('PCA', fontsize=16)
+
+		sns.despine()
+		plt.tight_layout()
+		plt.show()
+		plt.close()
+
+
 
 class fcc_tSNE(DR):
 	'''
@@ -342,6 +358,19 @@ class fcc_tSNE(DR):
 	def plot(self):
 		plt.figure(figsize=(5,5))
 		sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.clu.density, legend=None, edgecolor='none')
+		plt.xlabel('t-SNE 1', fontsize=14)
+		plt.ylabel('t-SNE 2', fontsize=14)
+		plt.tick_params(labelbottom=False, labelleft=False)
+		sns.despine(left=True, bottom=True)
+		plt.tight_layout()
+		plt.show()
+		plt.close()
+
+
+	def plot_barcodes(self):
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		plt.figure(figsize=(5,5))
+		sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
 		plt.xlabel('t-SNE 1', fontsize=14)
 		plt.ylabel('t-SNE 2', fontsize=14)
 		plt.tick_params(labelbottom=False, labelleft=False)
@@ -375,6 +404,19 @@ class fcc_FItSNE(DR):
 		plt.close()
 
 
+	def plot_barcodes(self):
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		plt.figure(figsize=(5,5))
+		sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
+		plt.xlabel('FIt-SNE 1', fontsize=14)
+		plt.ylabel('FIt-SNE 2', fontsize=14)
+		plt.tick_params(labelbottom=False, labelleft=False)
+		sns.despine(left=True, bottom=True)
+		plt.tight_layout()
+		plt.show()
+		plt.close()
+
+
 
 class fcc_UMAP(DR):
 	'''
@@ -392,6 +434,19 @@ class fcc_UMAP(DR):
 	def plot(self):
 		plt.figure(figsize=(5,5))
 		sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.clu.density, legend=None, edgecolor='none')
+		plt.xlabel('UMAP 1', fontsize=14)
+		plt.ylabel('UMAP 2', fontsize=14)
+		plt.tick_params(labelbottom=False, labelleft=False)
+		sns.despine(left=True, bottom=True)
+		plt.tight_layout()
+		plt.show()
+		plt.close()
+
+
+	def plot_barcodes(self):
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		plt.figure(figsize=(5,5))
+		sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
 		plt.xlabel('UMAP 1', fontsize=14)
 		plt.ylabel('UMAP 2', fontsize=14)
 		plt.tick_params(labelbottom=False, labelleft=False)
