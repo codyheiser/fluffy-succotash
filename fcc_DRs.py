@@ -73,22 +73,31 @@ class RNA_counts():
 			self.barcodes = None
 
 
-	def distance_matrix(self, transform=None, **kwargs):
+	def distance_matrix(self, transform=None, ranks='all', **kwargs):
 		'''
 		calculate Euclidean distances between cells in matrix of shape (n_cells, n_cells)
 			norm = how to normalize data prior to calculating distances (None, "arcsinh", "log2")
 			**kwargs = keyword arguments to pass to normalization functions
 		'''
+		# transform data first, if necessary
 		if transform is None:
-			return sc.spatial.distance_matrix(self.counts, self.counts)
+			transformed = self.counts
 
-		elif transform == 'arcsinh':
+		if transform == 'arcsinh':
 			transformed = self.arcsinh_norm(**kwargs)
-			return sc.spatial.distance_matrix(transformed, transformed)
 
 		elif transform == 'log2':
 			transformed = self.log2_norm(**kwargs)
+
+		# then subset data by rank-ordered barcode appearance
+		if ranks=='all':
 			return sc.spatial.distance_matrix(transformed, transformed)
+
+		else:
+			assert self.barcodes is not None, 'Barcodes not assigned.\n'
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
+			ranks_counts = transformed[np.array(self.barcodes.isin(list(ranks_i)))] # subset transformed counts array
+			return sc.spatial.distance_matrix(ranks_counts, ranks_counts)
 
 
 	def knn_graph(self, k, **kwargs):
@@ -98,6 +107,12 @@ class RNA_counts():
 			**kwargs = keyword arguments to pass to distance_matrix() function
 		'''
 		return kneighbors_graph(self.distance_matrix(**kwargs), k, mode='connectivity', include_self=False).toarray()
+
+
+	def top_barcodes(self, ranks):
+		'''return list of top-ranked barcodes by prevalence in dataset'''
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		return list(self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index)
 
 
 	def arcsinh_norm(self, norm=True, scale=1000):
@@ -244,14 +259,32 @@ class DR():
 			self.barcodes = None
 
 
-	def distance_matrix(self):
-		'''calculate Euclidean distances between cells in matrix of shape (n_cells, n_cells)'''
-		return sc.spatial.distance_matrix(self.results, self.results)
+	def distance_matrix(self, ranks='all'):
+		'''
+		calculate Euclidean distances between cells in matrix of shape (n_cells, n_cells)
+			ranks: rank barcodes by occurrence in dataset and plot list of ranks (e.g. [1,2,3] or np.arange(1:4) for top 3 codes)
+		'''
+		if ranks == 'all':
+			return sc.spatial.distance_matrix(self.results, self.results)
+
+		else:
+			assert self.barcodes is not None, 'Barcodes not assigned.\n'
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
+			ranks_results = self.results[np.array(self.barcodes.isin(list(ranks_i)))] # subset results array
+			return sc.spatial.distance_matrix(ranks_results, ranks_results)
 
 
-	def knn_graph(self, k):
-		'''calculate k nearest neighbors for each cell in distance matrix of shape (n_cells, n_cells)'''
-		return kneighbors_graph(self.distance_matrix(), k, mode='connectivity', include_self=False).toarray()
+	def knn_graph(self, k, ranks='all'):
+		'''
+		calculate k nearest neighbors for each cell in distance matrix of shape (n_cells, n_cells)
+			ranks: rank barcodes by occurrence in dataset and plot list of ranks (e.g. [1,2,3] or np.arange(1:4) for top 3 codes)
+		'''
+		if ranks=='all':
+			return kneighbors_graph(self.distance_matrix(), k, mode='connectivity', include_self=False).toarray()
+
+		else:
+			assert self.barcodes is not None, 'Barcodes not assigned.\n'
+			return kneighbors_graph(self.distance_matrix(ranks=ranks), k, mode='connectivity', include_self=False).toarray()
 
 
 	def silhouette_score(self):
@@ -326,11 +359,24 @@ class fcc_PCA(DR):
 		plt.close()
 
 
-	def plot_barcodes(self):
+	def plot_barcodes(self, ranks='all'):
+		'''
+		Plot projection colored by barcode
+			ranks: Rank barcodes by occurrence in dataset and plot list of ranks (e.g. [1,2,3] or np.arange(1:4) for top 3 codes). Default all codes plotted.
+		'''
 		assert self.barcodes is not None, 'Barcodes not assigned.\n'
 		plt.figure(figsize=(5,5))
 
-		sns.scatterplot(x=self.results[:,0], y=self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
+		if ranks == 'all':
+			sns.scatterplot(x=self.results[:,0], y=self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
+
+		else:
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
+			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i))] # subset barcodes series
+			ranks_results = self.results[np.array(self.barcodes.isin(list(ranks_i)))] # subset results array
+			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.1, color='gray', legend=None, edgecolor='none')
+			sns.scatterplot(ranks_results[:,0], ranks_results[:,1], s=75, alpha=0.7, legend=False, hue=ranks_codes, edgecolor='none')
+
 		plt.tick_params(labelbottom=False, labelleft=False)
 		plt.ylabel('PC2', fontsize=14)
 		plt.xlabel('PC1', fontsize=14)
@@ -367,10 +413,24 @@ class fcc_tSNE(DR):
 		plt.close()
 
 
-	def plot_barcodes(self):
+	def plot_barcodes(self, ranks='all'):
+		'''
+		Plot projection colored by barcode
+			ranks: Rank barcodes by occurrence in dataset and plot list of ranks (e.g. [1,2,3] or np.arange(1:4) for top 3 codes). Default all codes plotted.
+		'''
 		assert self.barcodes is not None, 'Barcodes not assigned.\n'
 		plt.figure(figsize=(5,5))
-		sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
+
+		if ranks == 'all':
+			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
+
+		else:
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
+			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i))] # subset barcodes series
+			ranks_results = self.results[np.array(self.barcodes.isin(list(ranks_i)))] # subset results array
+			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.1, color='gray', legend=None, edgecolor='none')
+			sns.scatterplot(ranks_results[:,0], ranks_results[:,1], s=75, alpha=0.7, legend=False, hue=ranks_codes, edgecolor='none')
+
 		plt.xlabel('t-SNE 1', fontsize=14)
 		plt.ylabel('t-SNE 2', fontsize=14)
 		plt.tick_params(labelbottom=False, labelleft=False)
@@ -404,10 +464,24 @@ class fcc_FItSNE(DR):
 		plt.close()
 
 
-	def plot_barcodes(self):
+	def plot_barcodes(self, ranks='all'):
+		'''
+		Plot projection colored by barcode
+			ranks: Rank barcodes by occurrence in dataset and plot list of ranks (e.g. [1,2,3] or np.arange(1:4) for top 3 codes). Default all codes plotted.
+		'''
 		assert self.barcodes is not None, 'Barcodes not assigned.\n'
 		plt.figure(figsize=(5,5))
-		sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
+
+		if ranks == 'all':
+			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
+
+		else:
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
+			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i))] # subset barcodes series
+			ranks_results = self.results[np.array(self.barcodes.isin(list(ranks_i)))] # subset results array
+			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.1, color='gray', legend=None, edgecolor='none')
+			sns.scatterplot(ranks_results[:,0], ranks_results[:,1], s=75, alpha=0.7, legend=False, hue=ranks_codes, edgecolor='none')
+
 		plt.xlabel('FIt-SNE 1', fontsize=14)
 		plt.ylabel('FIt-SNE 2', fontsize=14)
 		plt.tick_params(labelbottom=False, labelleft=False)
@@ -443,10 +517,24 @@ class fcc_UMAP(DR):
 		plt.close()
 
 
-	def plot_barcodes(self):
+	def plot_barcodes(self, ranks='all'):
+		'''
+		Plot projection colored by barcode
+			ranks: Rank barcodes by occurrence in dataset and plot list of ranks (e.g. [1,2,3] or np.arange(1:4) for top 3 codes). Default all codes plotted.
+		'''
 		assert self.barcodes is not None, 'Barcodes not assigned.\n'
 		plt.figure(figsize=(5,5))
-		sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
+
+		if ranks == 'all':
+			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
+
+		else:
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
+			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i))] # subset barcodes series
+			ranks_results = self.results[np.array(self.barcodes.isin(list(ranks_i)))] # subset results array
+			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.1, color='gray', legend=None, edgecolor='none')
+			sns.scatterplot(ranks_results[:,0], ranks_results[:,1], s=75, alpha=0.7, legend=False, hue=ranks_codes, edgecolor='none')
+
 		plt.xlabel('UMAP 1', fontsize=14)
 		plt.ylabel('UMAP 2', fontsize=14)
 		plt.tick_params(labelbottom=False, labelleft=False)
