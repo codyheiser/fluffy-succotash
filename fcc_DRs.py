@@ -119,6 +119,12 @@ class RNA_counts():
 		return list(self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index) + IDs
 
 
+	def barcode_counts(self, IDs):
+		'''given list of barcode IDs, return pd.Series of number of appearances in dataset'''
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		return self.barcodes.value_counts()[self.barcodes.value_counts().index.isin(IDs)]
+
+
 	def arcsinh_norm(self, norm=True, scale=1000):
 		'''
 		Perform an arcsinh-transformation on a np.ndarray containing raw data of shape=(n_cells,n_genes).
