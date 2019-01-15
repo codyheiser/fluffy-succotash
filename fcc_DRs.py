@@ -95,8 +95,10 @@ class RNA_counts():
 
 		else:
 			assert self.barcodes is not None, 'Barcodes not assigned.\n'
-			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
-			ranks_counts = transformed[np.array(self.barcodes.isin(list(ranks_i)))] # subset transformed counts array
+			ints = [x for x in ranks if type(x)==int] # pull out rank values
+			IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+			ranks_counts = transformed[np.array(self.barcodes.isin(list(ranks_i) + IDs))] # subset transformed counts array
 			return sc.spatial.distance_matrix(ranks_counts, ranks_counts)
 
 
@@ -112,7 +114,9 @@ class RNA_counts():
 	def top_barcodes(self, ranks):
 		'''return list of top-ranked barcodes by prevalence in dataset'''
 		assert self.barcodes is not None, 'Barcodes not assigned.\n'
-		return list(self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index)
+		ints = [x for x in ranks if type(x)==int] # pull out rank values
+		IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+		return list(self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index) + IDs
 
 
 	def arcsinh_norm(self, norm=True, scale=1000):
@@ -269,8 +273,10 @@ class DR():
 
 		else:
 			assert self.barcodes is not None, 'Barcodes not assigned.\n'
-			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
-			ranks_results = self.results[np.array(self.barcodes.isin(list(ranks_i)))] # subset results array
+			ints = [x for x in ranks if type(x)==int] # pull out rank values
+			IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+			ranks_results = self.results[self.barcodes.isin(list(ranks_i) + IDs)] # subset results array
 			return sc.spatial.distance_matrix(ranks_results, ranks_results)
 
 
@@ -285,6 +291,14 @@ class DR():
 		else:
 			assert self.barcodes is not None, 'Barcodes not assigned.\n'
 			return kneighbors_graph(self.distance_matrix(ranks=ranks), k, mode='connectivity', include_self=False).toarray()
+
+
+	def top_barcodes(self, ranks):
+		'''return list of top-ranked barcodes by prevalence in dataset'''
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		ints = [x for x in ranks if type(x)==int] # pull out rank values
+		IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+		return list(self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index) + IDs
 
 
 	def silhouette_score(self):
@@ -371,9 +385,11 @@ class fcc_PCA(DR):
 			sns.scatterplot(x=self.results[:,0], y=self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
 
 		else:
-			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
-			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i))] # subset barcodes series
-			ranks_results = self.results[np.array(self.barcodes.isin(list(ranks_i)))] # subset results array
+			ints = [x for x in ranks if type(x)==int] # pull out rank values
+			IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i) + IDs)] # subset barcodes series
+			ranks_results = self.results[self.barcodes.isin(list(ranks_i) + IDs)] # subset results array
 			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.1, color='gray', legend=None, edgecolor='none')
 			sns.scatterplot(ranks_results[:,0], ranks_results[:,1], s=75, alpha=0.7, legend=False, hue=ranks_codes, edgecolor='none')
 
@@ -425,9 +441,11 @@ class fcc_tSNE(DR):
 			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
 
 		else:
-			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
-			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i))] # subset barcodes series
-			ranks_results = self.results[np.array(self.barcodes.isin(list(ranks_i)))] # subset results array
+			ints = [x for x in ranks if type(x)==int] # pull out rank values
+			IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i) + IDs)] # subset barcodes series
+			ranks_results = self.results[self.barcodes.isin(list(ranks_i) + IDs)] # subset results array
 			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.1, color='gray', legend=None, edgecolor='none')
 			sns.scatterplot(ranks_results[:,0], ranks_results[:,1], s=75, alpha=0.7, legend=False, hue=ranks_codes, edgecolor='none')
 
@@ -476,9 +494,11 @@ class fcc_FItSNE(DR):
 			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
 
 		else:
-			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
-			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i))] # subset barcodes series
-			ranks_results = self.results[np.array(self.barcodes.isin(list(ranks_i)))] # subset results array
+			ints = [x for x in ranks if type(x)==int] # pull out rank values
+			IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i) + IDs)] # subset barcodes series
+			ranks_results = self.results[self.barcodes.isin(list(ranks_i) + IDs)] # subset results array
 			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.1, color='gray', legend=None, edgecolor='none')
 			sns.scatterplot(ranks_results[:,0], ranks_results[:,1], s=75, alpha=0.7, legend=False, hue=ranks_codes, edgecolor='none')
 
@@ -529,9 +549,11 @@ class fcc_UMAP(DR):
 			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
 
 		else:
-			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ranks)].index
-			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i))] # subset barcodes series
-			ranks_results = self.results[np.array(self.barcodes.isin(list(ranks_i)))] # subset results array
+			ints = [x for x in ranks if type(x)==int] # pull out rank values
+			IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i) + IDs)] # subset barcodes series
+			ranks_results = self.results[self.barcodes.isin(list(ranks_i) + IDs)] # subset results array
 			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.1, color='gray', legend=None, edgecolor='none')
 			sns.scatterplot(ranks_results[:,0], ranks_results[:,1], s=75, alpha=0.7, legend=False, hue=ranks_codes, edgecolor='none')
 
