@@ -91,15 +91,18 @@ class RNA_counts():
 
 		# then subset data by rank-ordered barcode appearance
 		if ranks=='all':
+			assert self.barcodes is not None, 'Barcodes not assigned.\n'
 			return sc.spatial.distance_matrix(transformed, transformed)
 
-		else:
-			assert self.barcodes is not None, 'Barcodes not assigned.\n'
-			ints = [x for x in ranks if type(x)==int] # pull out rank values
-			IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
-			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
-			ranks_counts = transformed[np.array(self.barcodes.isin(list(ranks_i) + IDs))] # subset transformed counts array
-			return sc.spatial.distance_matrix(ranks_counts, ranks_counts)
+		elif not isinstance(ranks, (list,)): # make sure input is list-formatted
+			ranks = [ranks]
+
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		ints = [x for x in ranks if type(x)==int] # pull out rank values
+		IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+		ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+		ranks_counts = transformed[np.array(self.barcodes.isin(list(ranks_i) + IDs))] # subset transformed counts array
+		return sc.spatial.distance_matrix(ranks_counts, ranks_counts)
 
 
 	def knn_graph(self, k, **kwargs):
@@ -108,12 +111,17 @@ class RNA_counts():
 			k = number of nearest neighbors to test
 			**kwargs = keyword arguments to pass to distance_matrix() function
 		'''
+		# TODO: determine if distance matrix should be calculated on whole or on subset (ranks of **kwargs)
 		return kneighbors_graph(self.distance_matrix(**kwargs), k, mode='connectivity', include_self=False).toarray()
 
 
 	def top_barcodes(self, ranks):
 		'''return list of top-ranked barcodes by prevalence in dataset'''
 		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+
+		if not isinstance(ranks, (list,)): # make sure input is list-formatted
+			ranks = [ranks]
+
 		ints = [x for x in ranks if type(x)==int] # pull out rank values
 		IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
 		return list(self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index) + IDs
@@ -122,21 +130,38 @@ class RNA_counts():
 	def barcode_counts(self, IDs):
 		'''given list of barcode IDs, return pd.Series of number of appearances in dataset'''
 		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+
+		if not isinstance(IDs, (list,)): # make sure input is list-formatted
+			IDs = [IDs]
+
 		return self.barcodes.value_counts()[self.barcodes.value_counts().index.isin(IDs)]
 
 
-	def arcsinh_norm(self, norm=True, scale=1000):
+	def arcsinh_norm(self, norm=True, scale=1000, ranks='all'):
 		'''
 		Perform an arcsinh-transformation on a np.ndarray containing raw data of shape=(n_cells,n_genes).
 		Useful for feeding into PCA or tSNE.
 			norm = convert to fractional counts first? divide each count by sqrt of sum of squares of counts for cell.
 			scale = factor to multiply values by before arcsinh-transform. scales values away from [0,1] in order to make arcsinh more effective.
+			ranks = which barcodes to include as list of indices or strings with barcode IDs
 		'''
 		if not norm:
-			return np.arcsinh(self.counts * scale)
+			out = np.arcsinh(self.counts * scale)
 
 		else:
-			return np.arcsinh(normalize(self.counts, axis=0, norm='l2') * scale)
+			out = np.arcsinh(normalize(self.counts, axis=0, norm='l2') * scale)
+
+		if ranks=='all':
+			return out
+
+		elif not isinstance(ranks, (list,)): # make sure input is list-formatted
+			ranks = [ranks]
+
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		ints = [x for x in ranks if type(x)==int] # pull out rank values
+		IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+		ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+		return out[np.array(self.barcodes.isin(list(ranks_i) + IDs))] # subset transformed counts array
 
 
 	def log2_norm(self, norm=True):
@@ -146,10 +171,22 @@ class RNA_counts():
 			norm = convert to fractional counts first? divide each count by sqrt of sum of squares of counts for cell.
 		'''
 		if not norm:
-			return np.log2(self.counts + 1)
+			out = np.log2(self.counts + 1)
 
 		else:
-			return np.log2(normalize(self.counts, axis=0, norm='l2') + 1)
+			out = np.log2(normalize(self.counts, axis=0, norm='l2') + 1)
+
+		if ranks=='all':
+			return out
+
+		elif not isinstance(ranks, (list,)): # make sure input is list-formatted
+			ranks = [ranks]
+
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		ints = [x for x in ranks if type(x)==int] # pull out rank values
+		IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+		ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+		return out[np.array(self.barcodes.isin(list(ranks_i) + IDs))] # subset transformed counts array
 
 
 	@classmethod
