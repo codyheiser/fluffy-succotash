@@ -63,7 +63,7 @@ class RNA_counts():
 		self.counts = np.ascontiguousarray(self.data) # store counts matrix as counts attribute (no labels, np.array format)
 
 		if barcodes is not None: # if barcodes df provided, merge with data
-			data_coded = self.data.merge(barcodes, left_index=True, right_on='Cell Barcode', how='left')
+			data_coded = self.data.merge(pd.DataFrame(barcodes), left_index=True, right_on='Cell Barcode', how='left')
 			data_coded = data_coded.set_index('Cell Barcode', drop=True)
 			data_coded = data_coded.astype({'Barcode':'category'})
 			self.data_coded = data_coded # create 'coded' attribute that has data and barcodes
@@ -193,14 +193,30 @@ class RNA_counts():
 	@classmethod
 	def drop_set(cls, counts_obj, drop_index, axis):
 		'''drop cells (axis 0) or genes (axis 1) with a pd.Index list. return RNA_counts object with reduced data.'''
-		return cls(counts_obj.data.drop(drop_index, axis=axis), labels=[counts_obj.cell_labels, counts_obj.gene_labels])
+		if counts_obj.barcodes is not None:
+			codes = pd.DataFrame(counts_obj.barcodes)
+			codes['Cell Barcode'] = codes.index # make barcodes mergeable when calling cls()
+
+		else:
+			codes=None
+
+		return cls(counts_obj.data.drop(drop_index, axis=axis), labels=[counts_obj.cell_labels, counts_obj.gene_labels], barcodes=codes)
 
 
 	@classmethod
 	def downsample_rand(cls, counts_obj, n_cells, seed=None):
 		'''randomly downsample a dataframe of shape (n_cells, n_features) to n_cells and generate new counts object'''
 		np.random.seed(seed) # set seed for reproducible sampling if desired
-		return cls(counts_obj.data.iloc[np.random.choice(counts_obj.data.shape[0], n_cells, replace=False)], labels=[counts_obj.cell_labels, counts_obj.gene_labels])
+		cells_out = np.random.choice(counts_obj.data.shape[0], n_cells, replace=False)
+
+		if counts_obj.barcodes is not None:
+			codes = pd.DataFrame(counts_obj.barcodes)
+			codes['Cell Barcode'] = codes.index # make barcodes mergeable when calling cls()
+
+		else:
+			codes=None
+
+		return cls(counts_obj.data.iloc[cells_out], labels=[counts_obj.cell_labels, counts_obj.gene_labels], barcodes=codes)
 
 
 	@classmethod
@@ -220,7 +236,14 @@ class RNA_counts():
 			clu_num = int(count/clu_counts.sum()*n_cells) + 1 # number of cells to sample for given cluster
 			cells_out = np.append(cells_out, np.random.choice(np.where(clu_membership == ID)[0], clu_num, replace=False))
 
-		return cls(counts_obj.data.iloc[cells_out], labels=[counts_obj.cell_labels, counts_obj.gene_labels])
+		if counts_obj.barcodes is not None:
+			codes = pd.DataFrame(counts_obj.barcodes)
+			codes['Cell Barcode'] = codes.index # make barcodes mergeable when calling cls()
+
+		else:
+			codes=None
+
+		return cls(counts_obj.data.iloc[cells_out], labels=[counts_obj.cell_labels, counts_obj.gene_labels], barcodes=codes)
 
 
 	@classmethod
@@ -229,9 +252,16 @@ class RNA_counts():
 		kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=seed) # generate KFold object for splitting data
 		splits = {'train':[], 'test':[]} # initiate empty dictionary to dump matrix subsets into
 
+		if counts_obj.barcodes is not None:
+			codes = pd.DataFrame(counts_obj.barcodes)
+			codes['Cell Barcode'] = codes.index # make barcodes mergeable when calling cls()
+
+		else:
+			codes=None
+
 		for train_i, test_i in kf.split(counts_obj.data):
-			splits['train'].append(cls(counts_obj.data.iloc[train_i], labels=[counts_obj.cell_labels, counts_obj.gene_labels]))
-			splits['test'].append(cls(counts_obj.data.iloc[test_i], labels=[counts_obj.cell_labels, counts_obj.gene_labels]))
+			splits['train'].append(cls(counts_obj.data.iloc[train_i], labels=[counts_obj.cell_labels, counts_obj.gene_labels], barcodes=codes))
+			splits['test'].append(cls(counts_obj.data.iloc[test_i], labels=[counts_obj.cell_labels, counts_obj.gene_labels], barcodes=codes))
 
 		return splits
 
@@ -245,15 +275,30 @@ class RNA_counts():
 		else:
 			selected_genes = nvr.select_genes(counts_obj.arcsinh_norm(scale=scale)) # select features from arsinh-transformed, non-noisy data
 
+		if counts_obj.barcodes is not None:
+			codes = pd.DataFrame(counts_obj.barcodes)
+			codes['Cell Barcode'] = codes.index # make barcodes mergeable when calling cls()
+
+		else:
+			codes=None
+
 		print('\nSelected {} variable genes\n'.format(selected_genes.shape[0]))
-		return cls(counts_obj.data.iloc[:,selected_genes], labels=[counts_obj.cell_labels, counts_obj.gene_labels])
+		return cls(counts_obj.data.iloc[:,selected_genes], labels=[counts_obj.cell_labels, counts_obj.gene_labels], barcodes=codes)
 
 
 	@classmethod
 	def var_select(cls, counts_obj, n_features):
 		'''select n_features (genes) with highest variance across all cells in dataset'''
 		v = counts_obj.data.var(axis=0).nlargest(n_features).index # get top n variant gene IDs
-		return cls(counts_obj.data[v], labels=[counts_obj.cell_labels, counts_obj.gene_labels])
+
+		if counts_obj.barcodes is not None:
+			codes = pd.DataFrame(counts_obj.barcodes)
+			codes['Cell Barcode'] = codes.index # make barcodes mergeable when calling cls()
+
+		else:
+			codes=None
+
+		return cls(counts_obj.data[v], labels=[counts_obj.cell_labels, counts_obj.gene_labels], barcodes=codes)
 
 
 
