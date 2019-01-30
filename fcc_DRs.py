@@ -1,7 +1,7 @@
 # furry-couscous dimensionality reduction objects
 
 # @author: C Heiser
-# December 2018
+# January 2019
 
 # utility functions
 from fcc_utils import *

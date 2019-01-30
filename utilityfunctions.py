@@ -134,20 +134,21 @@ def easy_regression(x, y, deg=1, plot_out=True):
 	ci, pi = regression_intervals(x, y, p, x2)				# calculate prediction and confidence intervals over x2
 
 	if plot_out:
-		fig, ax = plt.subplots(figsize=(8, 6))
+		fig, ax = plt.subplots(figsize=(6, 5))
 		ax.fill_between(x2, y2+pi, y2-pi, color="0.5", edgecolor="", alpha=0.7, label='Prediction Interval')
 		ax.plot(x2, y2-ci, "--", color="0.5", label="95% Confidence Interval")
-		ax.plot(x2, y2+ci, "--", color="0.5")
+		ax.plot(x2, y2+ci, "--", color="0.5", label=None)
 		# fit
 		ax.plot(x2,y2,"-", color="0.1", linewidth=1.5, alpha=0.5, label="Fit")
 		# data
-		ax.scatter(x, y, color="0.1",alpha=0.7)
+		ax.scatter(x, y, color="0.1",alpha=0.7, label=None)
 
 		plt.xlim(np.min(x)-1,np.max(x)+1)
 		ax.get_xaxis().set_tick_params(direction="out")
 		ax.get_yaxis().set_tick_params(direction="out")
 		ax.xaxis.tick_bottom()
 		ax.yaxis.tick_left()
+		plt.legend(loc='best')
 		plt.tight_layout()
 		plt.show()
 		plt.close()
