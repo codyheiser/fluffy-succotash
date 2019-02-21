@@ -127,9 +127,12 @@ class RNA_counts():
 		return list(self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index) + IDs
 
 
-	def barcode_counts(self, IDs):
+	def barcode_counts(self, IDs='all'):
 		'''given list of barcode IDs, return pd.Series of number of appearances in dataset'''
 		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+
+		if IDs=='all':
+			return self.barcodes.value_counts()
 
 		if not isinstance(IDs, (list,)): # make sure input is list-formatted
 			IDs = [IDs]
