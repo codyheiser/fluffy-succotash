@@ -140,19 +140,22 @@ class RNA_counts():
 		return self.barcodes.value_counts()[self.barcodes.value_counts().index.isin(IDs)]
 
 
-	def arcsinh_norm(self, norm=True, scale=1000, ranks='all'):
+	def arcsinh_norm(self, norm='l2', scale=1000, ranks='all'):
 		'''
 		Perform an arcsinh-transformation on a np.ndarray containing raw data of shape=(n_cells,n_genes).
 		Useful for feeding into PCA or tSNE.
-			norm = convert to fractional counts first? divide each count by sqrt of sum of squares of counts for cell.
 			scale = factor to multiply values by before arcsinh-transform. scales values away from [0,1] in order to make arcsinh more effective.
 			ranks = which barcodes to include as list of indices or strings with barcode IDs
+			norm = normalization strategy prior to Log2 transorm. 
+				None: do not normalize data
+				'l1': divide each count by sum of counts for each cell
+				'l2': divide each count by sqrt of sum of squares of counts for cell.
 		'''
 		if not norm:
 			out = np.arcsinh(self.counts * scale)
 
 		else:
-			out = np.arcsinh(normalize(self.counts, axis=0, norm='l2') * scale)
+			out = np.arcsinh(normalize(self.counts, axis=1, norm=norm) * scale)
 
 		if ranks=='all':
 			return out
@@ -167,17 +170,20 @@ class RNA_counts():
 		return out[np.array(self.barcodes.isin(list(ranks_i) + IDs))] # subset transformed counts array
 
 
-	def log2_norm(self, norm=True):
+	def log2_norm(self, norm='l2'):
 		'''
 		Perform a log2-transformation on a np.ndarray containing raw data of shape=(n_cells,n_genes).
 		Useful for feeding into PCA or tSNE.
-			norm = convert to fractional counts first? divide each count by sqrt of sum of squares of counts for cell.
+			norm = normalization strategy prior to Log2 transorm. 
+				None: do not normalize data
+				'l1': divide each count by sum of counts for each cell
+				'l2': divide each count by sqrt of sum of squares of counts for cell.
 		'''
 		if not norm:
 			out = np.log2(self.counts + 1)
 
 		else:
-			out = np.log2(normalize(self.counts, axis=0, norm='l2') + 1)
+			out = np.log2(normalize(self.counts, axis=1, norm=norm) + 1)
 
 		if ranks=='all':
 			return out
