@@ -61,7 +61,6 @@ numexpr==2.6.8
 numpy==1.15.4
 pandas==0.22.0
 pandocfilters==1.4.2
-parso==0.3.1
 patsy==0.5.1
 pbr==5.2.0
 pexpect==4.6.0
