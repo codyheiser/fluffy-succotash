@@ -1,7 +1,7 @@
-# furry-couscous dimensionality reduction objects
+# dimensionality reduction objects
 
 # @author: C Heiser
-# May 2019
+# June 2019
 
 # utility functions
 from fcc_utils import *
@@ -28,7 +28,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns; sns.set(style = 'white')
 
-# optional packages #
+# optional packages containing other DR methods #
 
 # UMAP
 try:
@@ -38,10 +38,9 @@ except ImportError:
 
 # DCA
 try:
-	import scanpy.api as scanpy
-	from dca.api import dca						# DCA
+	import scanpy.api as scanpy					# DCA
 except ImportError:
-	print('DCA module not detected. Functionality will be disabled.')
+	print('Scanpy module not detected. DCA Functionality will be disabled.')
 
 # FIt-SNE
 if os.path.isdir('../FIt-SNE'):
@@ -66,12 +65,15 @@ except ImportError:
 class RNA_counts():
 	'''
 	Object containing scRNA-seq counts data
-		data = pd.DataFrame containing counts data.
-		labels = list of index_col and header values to pass to pd.read_csv(). None if no cell or gene IDs, respectively.
-		cells_axis = 0 if cells as rows, 1 if cells as columns.
 	'''
 	def __init__(self, data, labels=[0,0], cells_axis=0, barcodes=None):
-		'''initialize object from np.ndarray or pd.DataFrame (data)'''
+		'''
+		initialize object from np.ndarray or pd.DataFrame (data)
+			data = pd.DataFrame containing counts
+			labels = list containing [col, row] indices of labels in DataFrame. None if no cell or gene IDs, respectively.
+			cells_axis = cells x genes (0), or genes x cells (1)
+			barcodes = pd.DataFrame containing cell barcodes. Header of cell barcode column should be named 'Barcode'.
+		'''
 		self.data = pd.DataFrame(data) # store pd.DataFrame as data attribute
 
 		self.cell_labels = labels[0] # column containing cell IDs
@@ -89,8 +91,7 @@ class RNA_counts():
 		self.counts = np.ascontiguousarray(self.data) # store counts matrix as counts attribute (no labels, np.array format)
 
 		if barcodes is not None: # if barcodes df provided, merge with data
-			data_coded = self.data.merge(pd.DataFrame(barcodes), left_index=True, right_on='Cell Barcode', how='left')
-			data_coded = data_coded.set_index('Cell Barcode', drop=True)
+			data_coded = self.data.merge(barcodes, left_index=True, right_index=True, how='left')
 			data_coded = data_coded.astype({'Barcode':'category'})
 			self.data_coded = data_coded # create 'coded' attribute that has data and barcodes
 			self.barcodes = data_coded['Barcode'] # make barcodes attribute pd.Series for passing to other classes
@@ -102,7 +103,9 @@ class RNA_counts():
 	def distance_matrix(self, transform=None, ranks='all', **kwargs):
 		'''
 		calculate Euclidean distances between cells in matrix of shape (n_cells, n_cells)
-			norm = how to normalize data prior to calculating distances (None, "arcsinh", "log2")
+			transform = how to normalize and transform data prior to calculating distances (None, "arcsinh", or "log2")
+			ranks = which barcodes to return distances for. Can be list of ranks of most abundant barcodes (integers, i.e. [1,2,3] for top 3 barcodes),
+				or names of barcode IDs (strings, i.e. ['0','1','2'] for barcodes with numbered IDs)
 			**kwargs = keyword arguments to pass to normalization functions
 		'''
 		# transform data first, if necessary
@@ -130,30 +133,45 @@ class RNA_counts():
 		return sc.spatial.distance_matrix(ranks_counts, ranks_counts)
 
 
+	def barcode_distance_matrix(self, ranks, transform=None, **kwargs):
+		'''
+		calculate Euclidean distances between cells in two barcode groups within a dataset
+			ranks = which TWO barcodes to calculate distances between. List of ranks of most abundant barcodes (integers, i.e. [1,2] for top 2 barcodes),
+				or names of barcode IDs (strings, i.e. ['0','2'] for barcodes with numbered IDs)
+			transform = how to normalize and transform data prior to calculating distances (None, "arcsinh", or "log2")
+			**kwargs = keyword arguments to pass to normalization functions
+		'''
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+
+		# transform data first, if necessary
+		if transform is None:
+			transformed = self.counts
+
+		if transform == 'arcsinh':
+			transformed = self.arcsinh_norm(**kwargs)
+
+		elif transform == 'log2':
+			transformed = self.log2_norm(**kwargs)
+
+		ranks_0 = transformed[np.array(self.barcodes.isin(list(ranks[0])))] # subset transformed counts array to first barcode ID
+		ranks_1 = transformed[np.array(self.barcodes.isin(list(ranks[1])))] # subset transformed counts array to second barcode ID
+		return sc.spatial.distance_matrix(ranks_0, ranks_1)
+
+
 	def knn_graph(self, k, **kwargs):
 		'''
 		calculate k nearest neighbors for each cell in distance matrix of shape (n_cells, n_cells)
 			k = number of nearest neighbors to test
 			**kwargs = keyword arguments to pass to distance_matrix() function
 		'''
-		# TODO: determine if distance matrix should be calculated on whole or on subset (ranks of **kwargs)
 		return kneighbors_graph(self.distance_matrix(**kwargs), k, mode='connectivity', include_self=False).toarray()
 
 
-	def top_barcodes(self, ranks):
-		'''return list of top-ranked barcodes by prevalence in dataset'''
-		assert self.barcodes is not None, 'Barcodes not assigned.\n'
-
-		if not isinstance(ranks, (list,)): # make sure input is list-formatted
-			ranks = [ranks]
-
-		ints = [x for x in ranks if type(x)==int] # pull out rank values
-		IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
-		return list(self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index) + IDs
-
-
 	def barcode_counts(self, IDs='all'):
-		'''given list of barcode IDs, return pd.Series of number of appearances in dataset'''
+		'''
+		given list of barcode IDs, return pd.Series of number of appearances in dataset
+			IDs = which barcodes to return distances for. List of names of barcode IDs (strings, i.e. ['0','1','2'] for barcodes with numbered IDs)
+		'''
 		assert self.barcodes is not None, 'Barcodes not assigned.\n'
 
 		if IDs=='all':
@@ -169,12 +187,13 @@ class RNA_counts():
 		'''
 		Perform an arcsinh-transformation on a np.ndarray containing raw data of shape=(n_cells,n_genes).
 		Useful for feeding into PCA or tSNE.
-			scale = factor to multiply values by before arcsinh-transform. scales values away from [0,1] in order to make arcsinh more effective.
-			ranks = which barcodes to include as list of indices or strings with barcode IDs
 			norm = normalization strategy prior to Log2 transorm.
 				None: do not normalize data
 				'l1': divide each count by sum of counts for each cell
 				'l2': divide each count by sqrt of sum of squares of counts for cell.
+			scale = factor to multiply values by before arcsinh-transform. scales values away from [0,1] in order to make arcsinh more effective.
+			ranks = which barcodes to keep after normalization. Can be list of ranks of most abundant barcodes (integers, i.e. [1,2,3] for top 3 barcodes),
+				or names of barcode IDs (strings, i.e. ['0','1','2'] for barcodes with numbered IDs)
 		'''
 		if not norm:
 			out = np.arcsinh(self.counts * scale)
@@ -203,12 +222,14 @@ class RNA_counts():
 				None: do not normalize data
 				'l1': divide each count by sum of counts for each cell
 				'l2': divide each count by sqrt of sum of squares of counts for cell.
+			ranks = which barcodes to keep after normalization. Can be list of ranks of most abundant barcodes (integers, i.e. [1,2,3] for top 3 barcodes),
+				or names of barcode IDs (strings, i.e. ['0','1','2'] for barcodes with numbered IDs)
 		'''
 		if not norm:
-			out = np.log2(self.counts + 1)
+			out = np.log2(self.counts + 1) # add pseudocount of 1 to avoid log(0)
 
 		else:
-			out = np.log2(normalize(self.counts, axis=1, norm=norm) + 1)
+			out = np.log2(normalize(self.counts, axis=1, norm=norm) + 1) # add pseudocount of 1 to avoid log(0)
 
 		if ranks=='all':
 			return out
@@ -225,7 +246,13 @@ class RNA_counts():
 
 	@classmethod
 	def from_file(cls, datafile, labels=[0,0], cells_axis=0, barcodefile=None):
-		'''initialize object from outside file (datafile)'''
+		'''
+		initialize object from outside file (datafile)
+			datafile = tab- or comma-delimited (.tsv/.txt/.csv) file containing counts data. May be .zip or .gz compressed.
+			labels = list containing [col, row] indices of labels in DataFrame
+			cells_axis = cells x genes (0), or genes x cells (1)
+			barcodefile = comma-delimited (.csv) file containing vertical vector of cell barcode IDs
+		'''
 		filetype = os.path.splitext(datafile)[1] # extract file extension to save as metadata
 
 		if filetype == '.zip': # if compressed, open the file and update filetype
@@ -252,7 +279,7 @@ class RNA_counts():
 
 
 		if barcodefile: # if barcodes provided, read in file
-			barcodes = pd.read_csv(barcodefile, index_col=0).T
+			barcodes = pd.read_csv(barcodefile, index_col=None, header=None, names=['Barcode'])
 
 		else:
 			barcodes = None
@@ -265,9 +292,10 @@ class RNA_counts():
 	def drop_set(cls, counts_obj, drop_index, axis, num=False):
 		'''
 		drop cells (axis 0) or genes (axis 1) with a pd.Index list. return RNA_counts object with reduced data.
-			drop_index: list of indices to drop
-			axis: 0 to subset cells, 1 to subset genes
-			num: numerical index (iloc) or index by labels (loc)?
+			counts_obj = RNA_counts object to use as template for new, subsetted RNA_counts object.
+			drop_index = list of indices to drop
+			axis = 0 to subset cells, 1 to subset genes
+			num = numerical index (iloc) or index by labels (loc)?
 		'''
 		if counts_obj.barcodes is not None:
 			codes = pd.DataFrame(counts_obj.barcodes)
@@ -290,9 +318,10 @@ class RNA_counts():
 	def keep_set(cls, counts_obj, keep_index, axis, num=False):
 		'''
 		keep cells (axis 0) or genes (axis 1) with a pd.Index list. return RNA_counts object with reduced data.
-			keep_index: list of indices to keep
-			axis: 0 to subset cells, 1 to subset genes
-			num: numerical index (iloc) or index by labels (loc)?
+			counts_obj = RNA_counts object to use as template for new, subsetted RNA_counts object.
+			keep_index = list of indices to keep
+			axis = 0 to subset cells, 1 to subset genes
+			num = numerical index (iloc) or index by labels (loc)?
 		'''
 		if counts_obj.barcodes is not None:
 			codes = pd.DataFrame(counts_obj.barcodes)
@@ -318,7 +347,13 @@ class RNA_counts():
 
 	@classmethod
 	def downsample_rand(cls, counts_obj, n_cells, seed=None):
-		'''randomly downsample a dataframe of shape (n_cells, n_features) to n_cells and generate new counts object'''
+		'''
+		randomly downsample a dataframe of shape (n_cells, n_features) to n_cells and generate new counts object
+		return RNA_counts object with reduced data.
+			counts_obj = RNA_counts object to use as template for new, subsetted RNA_counts object
+			n_cells = total number of cells desired in downsampled RNA_counts object
+			seed = random number generator seed for reproducible results
+		'''
 		np.random.seed(seed) # set seed for reproducible sampling if desired
 		cells_out = np.random.choice(counts_obj.data.shape[0], n_cells, replace=False)
 
@@ -337,9 +372,11 @@ class RNA_counts():
 		'''
 		downsample a dataframe of shape (n_cells, n_features) to total n_cells using cluster membership.
 		finds proportion of cells in each cluster (DR.clu.membership attribute) and maintains each percentage.
-			counts_obj = RNA_counts object with data to downsample
+		return RNA_counts object with reduced data.
+			counts_obj = RNA_counts object to use as template for new, subsetted RNA_counts object
 			clu_membership = DR.clu.membership np.array generated from assocated RNA_counts data object
 			n_cells = total number of cells desired in downsampled RNA_counts object
+			seed = random number generator seed for reproducible results
 		'''
 		np.random.seed(seed) # set seed for reproducible sampling if desired
 		IDs, clu_counts = np.unique(clu_membership, return_counts=True) # get cluster IDs and number of cells in each
@@ -361,7 +398,13 @@ class RNA_counts():
 
 	@classmethod
 	def kfold_split(cls, counts_obj, n_splits, seed=None, shuffle=True):
-		'''split cells using k-fold strategy to reduce data size and cross-validate'''
+		'''
+		split cells using k-fold strategy to reduce data size and cross-validate. returns list of RNA_counts objects broken up into 'train' and 'test' sets.
+			counts_obj = RNA_counts object to use as template for new, subsetted RNA_counts objects
+			n_splits = k value for splitting dataset
+			seed = random number generator seed for reproducible results
+			shuffle = shuffle cell indices before dividing dataset?
+		'''
 		kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=seed) # generate KFold object for splitting data
 		splits = {'train':[], 'test':[]} # initiate empty dictionary to dump matrix subsets into
 
@@ -380,13 +423,20 @@ class RNA_counts():
 
 
 	@classmethod
-	def nvr_select(cls, counts_obj, scale=1000):
-		if scale:
+	def nvr_select(cls, counts_obj, parse_noise=True, **kwargs):
+		'''
+		use neighborhood variance ratio (NVR) to feature-select RNA_counts object
+		return RNA_counts object with reduced data.
+			counts_obj = RNA_counts object to use as template for new, feature-selected RNA_counts object
+			parse_noise = use pyNVR to get rid of noisy genes first?
+			**kwargs = keyword arguments to pass to arcsinh_norm() function
+		'''
+		if parse_noise:
 			hqGenes = nvr.parseNoise(counts_obj.counts) # identify non-noisy genes
-			selected_genes = nvr.select_genes(counts_obj.arcsinh_norm(scale=scale)[:,hqGenes]) # select features from arsinh-transformed, non-noisy data
+			selected_genes = nvr.select_genes(counts_obj.arcsinh_norm(**kwargs)[:,hqGenes]) # select features from arsinh-transformed, non-noisy data
 
 		else:
-			selected_genes = nvr.select_genes(counts_obj.arcsinh_norm(scale=scale)) # select features from arsinh-transformed, non-noisy data
+			selected_genes = nvr.select_genes(counts_obj.arcsinh_norm(**kwargs)) # select features from arsinh-transformed, non-noisy data
 
 		if counts_obj.barcodes is not None:
 			codes = pd.DataFrame(counts_obj.barcodes)
@@ -401,7 +451,12 @@ class RNA_counts():
 
 	@classmethod
 	def var_select(cls, counts_obj, n_features):
-		'''select n_features (genes) with highest variance across all cells in dataset'''
+		'''
+		select n_features (genes) with highest variance across all cells in dataset
+		return RNA_counts object with reduced data.
+			counts_obj = RNA_counts object to use as template for new, feature-selected RNA_counts object
+			n_features = total number of features desired in resulting dataset
+		'''
 		v = counts_obj.data.var(axis=0).nlargest(n_features).index # get top n variant gene IDs
 
 		if counts_obj.barcodes is not None:
@@ -418,6 +473,12 @@ class RNA_counts():
 class DR():
 	'''Catch-all class for dimensionality reduction outputs for high-dimensional data of shape (n_cells, n_features)'''
 	def __init__(self, matrix=None, latent=None, name='Dim', barcodes=None):
+		'''
+		matrix = input matrix to save as metadata (optional)
+		latent = n_cells x n_features matrix containing latent space output from DR method
+		name = name of DR method for plotting and metadata
+		barcodes = pd.DataFrame containing cell barcodes. Header of cell barcode column should be named 'Barcode'.
+		'''
 		self.input = pd.DataFrame(matrix) # store input matrix as metadata
 		self.name = name # store placeholder name of DR technique for plotting and metadata
 
@@ -426,48 +487,154 @@ class DR():
 			self.clu = Cluster(self.results, autoplot=False) # get density-peak cluster information for results to use for plotting
 
 		if barcodes is not None:
-			self.barcodes = barcodes # maintain given barcode information
+			if isinstance(barcodes, pd.DataFrame):
+				self.barcodes = barcodes.iloc[:,0] # maintain given barcode information as pd.Series
+			else:
+				self.barcodes = barcodes
 
 		else:
 			self.barcodes = None
 
 
-	def distance_matrix(self, ranks='all'):
+	def distance_matrix(self, transform=None, ranks='all', **kwargs):
 		'''
 		calculate Euclidean distances between cells in matrix of shape (n_cells, n_cells)
-			ranks: rank barcodes by occurrence in dataset and plot list of ranks (e.g. [1,2,3] or np.arange(1:4) for top 3 codes)
+			transform = how to normalize and transform data prior to calculating distances (None, "arcsinh", or "log2")
+			ranks = which barcodes to return distances for. Can be list of ranks of most abundant barcodes (integers, i.e. [1,2,3] for top 3 barcodes),
+				or names of barcode IDs (strings, i.e. ['0','1','2'] for barcodes with numbered IDs)
+			**kwargs = keyword arguments to pass to normalization functions
 		'''
-		if ranks == 'all':
-			return sc.spatial.distance_matrix(self.results, self.results)
+		# transform data first, if necessary
+		if transform is None:
+			transformed = self.results
 
-		else:
-			assert self.barcodes is not None, 'Barcodes not assigned.\n'
-			ints = [x for x in ranks if type(x)==int] # pull out rank values
-			IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
-			ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
-			ranks_results = self.results[self.barcodes.isin(list(ranks_i) + IDs)] # subset results array
-			return sc.spatial.distance_matrix(ranks_results, ranks_results)
+		if transform == 'arcsinh':
+			transformed = self.arcsinh_norm(**kwargs)
 
+		elif transform == 'log2':
+			transformed = self.log2_norm(**kwargs)
 
-	def knn_graph(self, k, ranks='all'):
-		'''
-		calculate k nearest neighbors for each cell in distance matrix of shape (n_cells, n_cells)
-			ranks: rank barcodes by occurrence in dataset and plot list of ranks (e.g. [1,2,3] or np.arange(1:4) for top 3 codes)
-		'''
+		# then subset data by rank-ordered barcode appearance
 		if ranks=='all':
-			return kneighbors_graph(self.distance_matrix(), k, mode='connectivity', include_self=False).toarray()
+			return sc.spatial.distance_matrix(transformed, transformed)
 
-		else:
-			assert self.barcodes is not None, 'Barcodes not assigned.\n'
-			return kneighbors_graph(self.distance_matrix(ranks=ranks), k, mode='connectivity', include_self=False).toarray()
+		elif not isinstance(ranks, (list,)): # make sure input is list-formatted
+			ranks = [ranks]
 
-
-	def top_barcodes(self, ranks):
-		'''return list of top-ranked barcodes by prevalence in dataset'''
 		assert self.barcodes is not None, 'Barcodes not assigned.\n'
 		ints = [x for x in ranks if type(x)==int] # pull out rank values
 		IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
-		return list(self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index) + IDs
+		ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+		ranks_counts = transformed[np.array(self.barcodes.isin(list(ranks_i) + IDs))] # subset transformed counts array
+		return sc.spatial.distance_matrix(ranks_counts, ranks_counts)
+
+
+	def barcode_distance_matrix(self, ranks, transform=None, **kwargs):
+		'''
+		calculate Euclidean distances between cells in two barcode groups within a dataset
+			ranks = which TWO barcodes to calculate distances between. List of ranks of most abundant barcodes (integers, i.e. [1,2] for top 2 barcodes),
+				or names of barcode IDs (strings, i.e. ['0','2'] for barcodes with numbered IDs)
+			transform = how to normalize and transform data prior to calculating distances (None, "arcsinh", or "log2")
+			**kwargs = keyword arguments to pass to normalization functions
+		'''
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+
+		# transform data first, if necessary
+		if transform is None:
+			transformed = self.results
+
+		if transform == 'arcsinh':
+			transformed = self.arcsinh_norm(**kwargs)
+
+		elif transform == 'log2':
+			transformed = self.log2_norm(**kwargs)
+
+		ranks_0 = transformed[np.array(self.barcodes.isin(list(ranks[0])))] # subset transformed counts array to first barcode ID
+		ranks_1 = transformed[np.array(self.barcodes.isin(list(ranks[1])))] # subset transformed counts array to second barcode ID
+		return sc.spatial.distance_matrix(ranks_0, ranks_1)
+
+	def knn_graph(self, k, **kwargs):
+		'''
+		calculate k nearest neighbors for each cell in distance matrix of shape (n_cells, n_cells)
+			k = number of nearest neighbors to test
+			**kwargs = keyword arguments to pass to distance_matrix() function
+		'''
+		return kneighbors_graph(self.distance_matrix(**kwargs), k, mode='connectivity', include_self=False).toarray()
+
+
+	def barcode_counts(self, IDs='all'):
+		'''
+		given list of barcode IDs, return pd.Series of number of appearances in dataset
+			IDs = which barcodes to return distances for. List of names of barcode IDs (strings, i.e. ['0','1','2'] for barcodes with numbered IDs)
+		'''
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+
+		if IDs=='all':
+			return self.barcodes.value_counts()
+
+		if not isinstance(IDs, (list,)): # make sure input is list-formatted
+			IDs = [IDs]
+
+		return self.barcodes.value_counts()[self.barcodes.value_counts().index.isin(IDs)]
+
+
+	def arcsinh_norm(self, norm='l1', scale=1000, ranks='all'):
+		'''
+		Perform an arcsinh-transformation on a np.ndarray containing raw data of shape=(n_cells,n_genes).
+		Useful for feeding into PCA or tSNE.
+			norm = normalization strategy prior to Log2 transorm.
+				None: do not normalize data
+				'l1': divide each count by sum of counts for each cell
+				'l2': divide each count by sqrt of sum of squares of counts for cell.
+			scale = factor to multiply values by before arcsinh-transform. scales values away from [0,1] in order to make arcsinh more effective.
+			ranks = which barcodes to include as list of indices or strings with barcode IDs
+		'''
+		if not norm:
+			out = np.arcsinh(self.results * scale)
+
+		else:
+			out = np.arcsinh(normalize(self.results, axis=1, norm=norm) * scale)
+
+		if ranks=='all':
+			return out
+
+		elif not isinstance(ranks, (list,)): # make sure input is list-formatted
+			ranks = [ranks]
+
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		ints = [x for x in ranks if type(x)==int] # pull out rank values
+		IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+		ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+		return out[np.array(self.barcodes.isin(list(ranks_i) + IDs))] # subset transformed counts array
+
+
+	def log2_norm(self, norm='l1', ranks='all'):
+		'''
+		Perform a log2-transformation on a np.ndarray containing raw data of shape=(n_cells,n_genes).
+		Useful for feeding into PCA or tSNE.
+			norm = normalization strategy prior to Log2 transorm.
+				None: do not normalize data
+				'l1': divide each count by sum of counts for each cell
+				'l2': divide each count by sqrt of sum of squares of counts for cell.
+			ranks = which barcodes to include as list of indices or strings with barcode IDs
+		'''
+		if not norm:
+			out = np.log2(self.results + 1)
+
+		else:
+			out = np.log2(normalize(self.results, axis=1, norm=norm) + 1)
+
+		if ranks=='all':
+			return out
+
+		elif not isinstance(ranks, (list,)): # make sure input is list-formatted
+			ranks = [ranks]
+
+		assert self.barcodes is not None, 'Barcodes not assigned.\n'
+		ints = [x for x in ranks if type(x)==int] # pull out rank values
+		IDs = [x for x in ranks if type(x)==str] # pull out any specific barcode IDs
+		ranks_i = self.barcodes.value_counts()[self.barcodes.value_counts().rank(axis=0, method='min', ascending=False).isin(ints)].index
+		return out[np.array(self.barcodes.isin(list(ranks_i) + IDs))] # subset transformed counts array
 
 
 	def silhouette_score(self):
@@ -476,8 +643,8 @@ class DR():
 		return silhouette_score(self.results, self.clu.membership) # calculate silhouette score
 
 
-	def cluster_counts(self, prettyprint=True):
-		'''return number of cells in each cluster'''
+	def cluster_counts(self):
+		'''print number of cells in each cluster'''
 		assert hasattr(self.clu, 'membership'), 'Clustering not yet determined. Assign clusters with self.clu.assign().\n'
 		IDs, counts = np.unique(self.clu.membership, return_counts=True)
 		for ID, count in zip(IDs, counts):
@@ -485,7 +652,7 @@ class DR():
 
 
 	def plot_clusters(self):
-		'''Visualize density peak clustering of DR results and calculate silhouette score'''
+		'''Visualize density peak clustering of DR results'''
 		assert hasattr(self.clu, 'clusters'), 'Clustering not yet determined. Assign clusters with self.clu.assign().\n'
 		fig, ax = plt.subplots(1, 3, figsize=(15, 5))
 		ax[0].scatter(self.results[:, 0], self.results[:, 1], s=75, alpha=0.7)
@@ -507,6 +674,12 @@ class DR():
 
 
 	def plot(self, color=None, save_to=None, figsize=(5,5)):
+		'''
+		standard plot of first 2 dimensions of DR latent space
+			color = vector of values to color points by. Default coloring is by point density.
+			save_to = path to .png file to save plot to
+			figsize = size in inches of output figure
+		'''
 		if color is None:
 			color = self.clu.density
 		fig, ax = plt.subplots(1, figsize=figsize)
@@ -535,13 +708,15 @@ class DR():
 	def plot_barcodes(self, ranks='all', save_to=None, figsize=(5,5)):
 		'''
 		Plot projection colored by barcode
-			ranks: Rank barcodes by occurrence in dataset and plot list of ranks (e.g. [1,2,3] or np.arange(1:4) for top 3 codes). Default all codes plotted.
+			ranks = which barcodes to include as list of indices or strings with barcode IDs
+			save_to = path to .png file to save plot to
+			figsize = size in inches of output figure
 		'''
 		assert self.barcodes is not None, 'Barcodes not assigned.\n'
 		fig, ax = plt.subplots(1, figsize=figsize)
 
 		if ranks == 'all':
-			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none')
+			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.7, hue=self.barcodes, legend=None, edgecolor='none', palette='plasma')
 
 		else:
 			ints = [x for x in ranks if type(x)==int] # pull out rank values
@@ -550,7 +725,7 @@ class DR():
 			ranks_codes = self.barcodes[self.barcodes.isin(list(ranks_i) + IDs)] # subset barcodes series
 			ranks_results = self.results[self.barcodes.isin(list(ranks_i) + IDs)] # subset results array
 			sns.scatterplot(self.results[:,0], self.results[:,1], s=75, alpha=0.1, color='gray', legend=None, edgecolor='none')
-			sns.scatterplot(ranks_results[:,0], ranks_results[:,1], s=75, alpha=0.7, legend=False, hue=ranks_codes, edgecolor='none')
+			sns.scatterplot(ranks_results[:,0], ranks_results[:,1], s=75, alpha=0.7, legend=False, hue=ranks_codes, edgecolor='none', palette='plasma')
 
 		plt.xlabel('{} 1'.format(self.name), fontsize=14)
 		ax.xaxis.set_label_coords(0.2, -0.025)
@@ -573,8 +748,15 @@ class DR():
 
 
 	@classmethod
-	def from_file(cls, datafile, labels=[0,0], cells_axis=0, name='Dim', barcodefile=None):
-		'''initialize object from outside file (datafile)'''
+	def from_file(cls, datafile, labels=[None,None], cells_axis=0, name='Dim', barcodefile=None):
+		'''
+		initialize object from outside file (datafile)
+			datafile = tab- or comma-delimited (.tsv/.txt/.csv) file containing DR results. can be .gz or .zip compressed.
+			labels = list containing [col, row] indices of labels in DataFrame
+			cells_axis = cells x genes (0), or genes x cells (1)
+			name = name of DR method for plotting and metadata
+			barcodefile = comma-delimited (.csv) file containing vertical vector of cell barcode IDs
+		'''
 		filetype = os.path.splitext(datafile)[1] # extract file extension to save as metadata
 
 		if filetype == '.zip': # if compressed, open the file and update filetype
@@ -605,7 +787,7 @@ class DR():
 
 
 		if barcodefile: # if barcodes provided, read in file
-			barcodes = pd.read_csv(barcodefile, index_col=0).T
+			barcodes = pd.read_csv(barcodefile, index_col=None, header=None, names=['Barcode'])
 
 		else:
 			barcodes = None
@@ -616,9 +798,7 @@ class DR():
 
 
 class fcc_PCA(DR):
-	'''
-	Object containing Principal Component Analysis of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components
-	'''
+	'''Object containing Principal Component Analysis of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components'''
 	def __init__(self, matrix, n_components, barcodes=None):
 		DR.__init__(self, matrix=matrix, barcodes=barcodes) # inherits from DR object
 		self.name = 'PC'
@@ -629,6 +809,7 @@ class fcc_PCA(DR):
 
 
 	def plot_PCA(self, color=None, save_to=None, figsize=(10,5)):
+		'''PCA plot including variance contribution per component'''
 		if color is None:
 			color = self.clu.density
 		plt.figure(figsize=figsize)
@@ -657,9 +838,7 @@ class fcc_PCA(DR):
 
 
 class fcc_tSNE(DR):
-	'''
-	Object containing t-SNE of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components
-	'''
+	'''Object containing t-SNE of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components'''
 	def __init__(self, matrix, perplexity, seed=None, barcodes=None, **kwargs):
 		DR.__init__(self, matrix=matrix, barcodes=barcodes) # inherits from DR object
 		self.name = 't-SNE'
@@ -671,9 +850,7 @@ class fcc_tSNE(DR):
 
 
 class fcc_FItSNE(DR):
-	'''
-	Object containing FIt-SNE (https://github.com/KlugerLab/FIt-SNE) of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components
-	'''
+	'''Object containing FIt-SNE (https://github.com/KlugerLab/FIt-SNE) of high-dimensional dataset of shape (n_cells, n_features) to reduce to n_components'''
 	def __init__(self, matrix, perplexity, seed=-1, barcodes=None, clean_workspace=True):
 		DR.__init__(self, matrix=matrix, barcodes=barcodes) # inherits from DR object
 		self.name = 'FIt-SNE'
@@ -688,9 +865,7 @@ class fcc_FItSNE(DR):
 
 
 class fcc_UMAP(DR):
-	'''
-	Object containing UMAP of high-dimensional dataset of shape (n_cells, n_features) to reduce to 2 components
-	'''
+	'''Object containing UMAP of high-dimensional dataset of shape (n_cells, n_features) to reduce to 2 components'''
 	def __init__(self, matrix, perplexity, seed=None, barcodes=None, **kwargs):
 		DR.__init__(self, matrix=matrix, barcodes=barcodes) # inherits from DR object
 		self.name = 'UMAP'
@@ -703,22 +878,33 @@ class fcc_UMAP(DR):
 
 class fcc_DCA(DR):
 	'''
-	Object containing DCA of high-dimensional dataset of shape (n_cells, n_features) to reduce to 33 components
+	Object containing DCA of high-dimensional dataset of shape (n_cells, n_features) to reduce components
 		NOTE: DCA removes features with 0 counts for all cells prior to processing.
 	'''
-	def __init__(self, matrix, n_threads=2, norm=True, barcodes=None):
+	def __init__(self, matrix, mode='latent', hidden_size=(64,32,64), norm=True, seed=None, barcodes=None, n_threads=2):
+		'''
+		mode = 'latent' to return n-dimensional latent space from hidden layer of autoencoder
+		hidden_size = size of layers for encoder (m, n, p), where n determines number of dimensions of latent space in 'latent' mode
+		norm = normalize output of DCA?
+		seed = random number generator seed for reproducible result
+		n_threads = parallelization of training (# of cores)
+		'''
 		DR.__init__(self, matrix=matrix, barcodes=barcodes) # inherits from DR object
 		self.name = 'DCA'
 		self.DCA_norm = norm # store normalization decision as metadata
 		self.adata = scanpy.AnnData(matrix) # generate AnnData object (https://github.com/theislab/scanpy) for passing to DCA
 		scanpy.pp.filter_genes(self.adata, min_counts=1) # remove features with 0 counts for all cells
-		dca(self.adata, threads=n_threads) # perform DCA analysis on AnnData object
+		scanpy.pp.dca(self.adata, mode=mode, threads=n_threads, random_state=seed, hidden_size=hidden_size, normalize_per_cell=False) # perform DCA analysis on AnnData object
 
 		if self.DCA_norm:
 			scanpy.pp.normalize_per_cell(self.adata) # normalize features for each cell with scanpy's method
 			scanpy.pp.log1p(self.adata) # log-transform data with scanpy's method
 
-		self.results = self.adata.X # return the denoised data as a np.ndarray
+		if mode=='latent':
+			self.results = self.adata.obsm['X_dca'] # return latent space as np.ndarray
+		elif mode=='denoise':
+			self.results = self.adata.X # return the denoised data as a np.ndarray
+
 		self.clu = Cluster(self.results.astype('double'), autoplot=False)
 
 
